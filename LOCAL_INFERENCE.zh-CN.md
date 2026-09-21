@@ -1,5 +1,39 @@
 # MiniMax H3 本地推理
 
+## 最简单的离线运行方式（A100）
+
+依赖环境已经安装好后，在仓库根目录只需执行：
+
+```bash
+bash run_h3_local.sh
+```
+
+脚本会：
+
+1. 强制启用 Hugging Face / Transformers 离线模式；
+2. 从 `/mnt/DataPart/jianghongda/checkpoint/MiniMax-H3` 加载权重；
+3. 自动识别当前可见的 1、2、4 或 8 张 A100；
+4. 启动本地 vLLM-Omni 服务并等待模型加载完成；
+5. 显示 `Prompt>`，直接粘贴一行文本描述并回车；
+6. 把结果保存到 `outputs/h3_日期_序号.mp4`；
+7. 可继续输入下一条描述，输入空行退出。
+
+例如只使用第 0、1 张卡：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 bash run_h3_local.sh
+```
+
+调整生成参数：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 \
+WIDTH=1024 HEIGHT=576 DURATION=5 STEPS=50 SEED=42 \
+bash run_h3_local.sh
+```
+
+整个推理过程不访问外网。若环境中没有 vLLM-Omni，需先在可联网机器准备完整 Python 环境/容器后复制到离线服务器；仅有模型权重不能替代推理框架依赖。
+
 这套脚本从本地权重目录加载 H3，不会在启动时从 Hugging Face 下载模型。默认路径已经设为：
 
 ```text
