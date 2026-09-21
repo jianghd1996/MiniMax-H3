@@ -1,144 +1,113 @@
-# MiniMax H3 本地推理
+# MiniMax H3 本地 Diffusers 推理
 
-## 最简单的离线运行方式（A100）
-
-依赖环境已经安装好后，在仓库根目录只需执行：
-
-```bash
-bash run_h3_local.sh
-```
-
-脚本会：
-
-1. 强制启用 Hugging Face / Transformers 离线模式；
-2. 从 `/mnt/DataPart/jianghongda/checkpoint/MiniMax-H3` 加载权重；
-3. 自动识别当前可见的 1、2、4 或 8 张 A100；
-4. 启动本地 vLLM-Omni 服务并等待模型加载完成；
-5. 显示 `Prompt>`，直接粘贴一行文本描述并回车；
-6. 把结果保存到 `outputs/h3_日期_序号.mp4`；
-7. 可继续输入下一条描述，输入空行退出。
-
-例如只使用第 0、1 张卡：
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 bash run_h3_local.sh
-```
-
-调整生成参数：
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 \
-WIDTH=1024 HEIGHT=576 DURATION=5 STEPS=50 SEED=42 \
-bash run_h3_local.sh
-```
-
-整个推理过程不访问外网。若环境中没有 vLLM-Omni，需先在可联网机器准备完整 Python 环境/容器后复制到离线服务器；仅有模型权重不能替代推理框架依赖。
-
-这套脚本从本地权重目录加载 H3，不会在启动时从 Hugging Face 下载模型。默认路径已经设为：
+默认使用两张 A100，并从以下本地目录读取 Diffusers 格式权重：
 
 ```text
 /mnt/DataPart/jianghongda/checkpoint/MiniMax-H3
 ```
 
-当前先提供最容易验证的 FL2VA 服务（文生视频与首/尾帧模型分区）和 T2VA 客户端。输出是带 32 kHz 立体声音频的 MP4。
+推理不需要 vLLM、不启动 HTTP 服务，也不会访问 Hugging Face Hub。
 
-## 1. 检查权重结构
+## 环境要求
 
-至少应存在：
+当前 Python 环境必须包含支持 MiniMax-H3 的 Modular Diffusers。先检查：
+
+```bash
+python -c "from diffusers import ModularPipeline; from diffusers.modular_pipelines.minimax_h3 import MiniMaxH3Blocks; print('MiniMax-H3 Diffusers OK')"
+```
+
+如果导入失败，说明当前 Diffusers 太旧。请在独立环境安装包含 MiniMax-H3 的新版 Diffusers。为了保护已有 PyTorch，安装本地 Diffusers 源码时使用：
+
+```bash
+python -m pip install --no-deps -e /path/to/diffusers
+```
+
+不要在已有 VideoX-Fun/Wan 环境里安装 vLLM，也不要让 pip 自动替换 PyTorch。
+
+权重目录至少应包含：
 
 ```text
 MiniMax-H3/
 ├── model_index.json
-├── FL2VA/
+├── transformer/
 ├── text_encoder/
 ├── tokenizer/
 ├── processor/
 ├── vae/
-└── audio_vae/
+├── audio_vae/
+├── scheduler/
+└── audio_scheduler/
 ```
 
-若目录里只有若干 safetensors、缺少配置文件或 `FL2VA/`，启动脚本会提前报错。
+这里使用的是根目录下的 Diffusers 格式权重，不是 `FL2VA/` 中供 SGLang/vLLM 使用的原始格式。
 
-## 2. 安装环境
-
-需要 Linux、CUDA、Git、ffmpeg，以及足够大的系统内存。H3 单个任务分区的 BF16 权重约 135 GiB；单卡方式依赖 CPU offload，并不适合普通 24 GB 显卡配合小内存主机。
+## 交互式推理
 
 ```bash
-cd MiniMax-H3
-bash scripts/local/setup_vllm_omni.sh
-source .venv-h3/bin/activate
+git pull origin main
+CUDA_VISIBLE_DEVICES=2,3 bash run_h3_local.sh
 ```
 
-脚本按官方 vLLM-Omni 配方安装 `vllm==0.26.0` 和当前 vLLM-Omni 源码。
+模型加载完成后会显示：
 
-## 3. 启动服务
-
-按硬件选择一个配置。
-
-单卡（CPU offload，需要大量内存）：
-
-```bash
-CUDA_VISIBLE_DEVICES=0 bash scripts/local/serve_h3.sh single
+```text
+Prompt>
 ```
 
-双 RTX 4090（建议先从 1024×576、5 秒开始）：
+粘贴一行描述并回车。结果保存到 `outputs/`。可以继续输入下一条；空行或 Ctrl-D 退出。
+
+等价的直接命令：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 bash scripts/local/serve_h3.sh 2x4090
+CUDA_VISIBLE_DEVICES=2,3 python infer_h3_diffusers.py
 ```
 
-双 RTX 5090：
+## 单次推理
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 bash scripts/local/serve_h3.sh 2x5090
-```
-
-四卡：
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/local/serve_h3.sh 4gpu
-```
-
-自定义权重或端口：
-
-```bash
-MODEL_PATH=/path/to/MiniMax-H3 PORT=30010 \
-CUDA_VISIBLE_DEVICES=0,1 bash scripts/local/serve_h3.sh 2x4090
-```
-
-看到 `Application startup complete` 后再运行客户端。首次初始化和首次生成都可能很慢。
-
-## 4. 生成测试视频
-
-```bash
-python scripts/local/generate_t2va.py \
+CUDA_VISIBLE_DEVICES=2,3 python infer_h3_diffusers.py \
   --prompt "A cinematic aerial shot of a lighthouse during a storm, synchronized thunder and ocean ambience." \
   --output outputs/h3_test.mp4 \
   --width 1024 --height 576 \
   --duration 5 --steps 50 --seed 42
 ```
 
-也可把长提示词放进 UTF-8 文本文件：
+也支持文本文件：
 
 ```bash
-python scripts/local/generate_t2va.py \
+CUDA_VISIBLE_DEVICES=2,3 python infer_h3_diffusers.py \
   --prompt-file prompt.txt \
   --output outputs/h3_test.mp4
 ```
 
-验证输出：
+## 双卡分配
+
+脚本采用官方 Diffusers 的双卡拆分：
+
+- `cuda:1`：Qwen3-VL 文本编码器；
+- `cuda:0`：H3 Transformer、视频 VAE、音频 VAE；
+- 两侧均使用 BF16；
+- `ComponentsManager` 负责必要时的 CPU offload。
+
+两张 A100 80GB 是推荐配置。两张 A100 40GB 无法直接容纳两个约 62GB 的 BF16 主组件，需要 INT8 或流式 block offload。脚本默认会提前停止，而不是加载到一半 OOM。若只是想尝试 CPU offload，可显式传入：
 
 ```bash
-ffprobe -v error -show_entries \
-  stream=index,codec_name,width,height,r_frame_rate,sample_rate,channels \
-  -of json outputs/h3_test.mp4
+CUDA_VISIBLE_DEVICES=2,3 bash run_h3_local.sh --allow-smaller-gpus
 ```
 
-## 常见问题
+## 参数覆盖
 
-- `missing FL2VA`：当前目录不是完整的 H3 根 checkpoint。
-- 进程被系统直接 kill：通常是系统内存或 pinned memory 不足。
-- CUDA OOM：先使用匹配的低显存 profile，并保持 1024×576、5 秒。
-- `vllm: command not found`：先执行安装脚本并激活 `.venv-h3`。
-- SGLang 的 `--model-variant` 报未知参数：本地脚本不走这条兼容性不稳定的路径。
-- 本地开源版本只覆盖 H3-Base；官方 Context-IR 和 Regenerate-2K 不在开源权重内。
+```bash
+CUDA_VISIBLE_DEVICES=2,3 \
+WIDTH=1344 HEIGHT=768 DURATION=8 STEPS=50 SEED=42 \
+bash run_h3_local.sh
+```
+
+H3 固定输出 24 FPS。帧数会自动向上对齐到视频 VAE 支持的 `17*n+5`。
+
+## 常见错误
+
+- `No module named diffusers.modular_pipelines.minimax_h3`：Diffusers 版本太旧。
+- `incomplete Diffusers checkpoint`：本地权重缺少根目录 Diffusers 组件。
+- 显存小于 70 GiB：很可能是 A100 40GB，需要另做 INT8 路径。
+- 找不到 ffmpeg/PyAV：安装视频编码依赖，但不要改动 PyTorch。
